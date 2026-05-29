@@ -12,19 +12,46 @@ import (
 	"time"
 )
 
+const numWorker = 8
+
 func main(){
 	if len(os.Args) < 2 {
 		log.Fatal("usage: dedup <directory>")
 	}
 	root := os.Args[1]
-	hashes := make(map[string][]string)
-
+	
 	log.Printf("Scanning %s...", root)
-	files := 0
 	start := time.Now()
-
+	
+	paths := make(chan string, 100)
 	var wg sync.WaitGroup
 	var mu sync.Mutex
+	hashes := make(map[string][]string)
+	files := 0
+
+	//start 8 wokers
+	for i:=0; i<numWorker; i++ {
+		wg.Add(1)
+		go func(){
+			defer wg.Done()
+			for path := range paths {
+				// read -> hash -> lock -> append -> unlock
+				data, err := os.ReadFile(path)
+				if err != nil {
+					log.Printf("WARN: could not read %s: %v", path, err)
+					continue
+				}
+
+				hash := sha256.Sum256(data) // returns [32]byte fixed-size array
+				// hex.EncodeToString gives you the readable hash like "2cf24dba...".
+				hashStr := hex.EncodeToString(hash[:]) // converts to 64-char hex string
+
+				mu.Lock()
+				hashes[hashStr] = append(hashes[hashStr], path)
+				mu.Unlock()
+			}
+		}()
+	}
 
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -38,32 +65,13 @@ func main(){
 		}
 
 		files++
-		wg.Add(1)
-		go func(path string) { 
-			defer wg.Done()
-
-			data, err := os.ReadFile(path)
-			if err != nil {
-				log.Printf("WARN: could not read %s: %v", path, err)
-				return
-			}
-
-			hash := sha256.Sum256(data) // returns [32]byte fixed-size array
-			// hex.EncodeToString gives you the readable hash like "2cf24dba...".
-			hashStr := hex.EncodeToString(hash[:]) // converts to 64-char hex string
-
-			mu.Lock()
-			hashes[hashStr] = append(hashes[hashStr], path)
-			mu.Unlock()
-			
-		}(path)
-
+		paths <- path
 		return nil
-
 	})
+	close(paths)
 
 	if err != nil {
-		fmt.Printf("Error while traversing the path %q: %v", root, err)
+		log.Printf("Error while traversing the path %q: %v", root, err)
 	}
 
 	wg.Wait()
@@ -76,11 +84,11 @@ func main(){
 
 	duplicateGroups := 0
 
-	for h, paths := range hashes {
-		if len(paths) > 1 {
+	for h, pathList := range hashes {
+		if len(pathList) > 1 {
 			duplicateGroups++
-			fmt.Printf("\nGroup %d (hash %s...) — %d files:\n", duplicateGroups, h[:8], len(paths))
-			for _, p := range paths {
+			fmt.Printf("\nGroup %d (hash %s...) — %d files:\n", duplicateGroups, h[:8], len(pathList))
+			for _, p := range pathList {
 				fmt.Printf(" %s\n", p)
 			}
 		}

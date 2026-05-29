@@ -1,2 +1,5 @@
 stress-data/
 test-data/
+
+*.exe
+*.txt
