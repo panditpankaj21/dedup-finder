@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -8,8 +9,10 @@ import (
 	"io/fs"
 	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -23,6 +26,17 @@ func main(){
 	
 	log.Printf("Scanning %s...", root)
 	start := time.Now()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func(){
+		<-sigChan
+		log.Printf("Cancellation requested, stopped...")
+		cancel()
+	}()
 	
 	paths := make(chan string, 100)
 	var wg sync.WaitGroup
@@ -35,17 +49,23 @@ func main(){
 		wg.Add(1)
 		go func(){
 			defer wg.Done()
-			for path := range paths {
-				// read -> hash -> lock -> append -> unlock
-				hashStr, err := hashFile(path)
-				if err != nil {
-					log.Printf("WARN: could not hash %s: %v", path, err)
-					continue
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case path, ok := <-paths:
+					if !ok {
+						return
+					}
+					hashStr, err := hashFile(path)
+                    if err != nil {
+                        log.Printf("WARN: %v", err)
+                        continue
+                    }
+                    mu.Lock()
+                    hashes[hashStr] = append(hashes[hashStr], path)
+                    mu.Unlock()
 				}
-
-				mu.Lock()
-				hashes[hashStr] = append(hashes[hashStr], path)
-				mu.Unlock()
 			}
 		}()
 	}
@@ -61,9 +81,13 @@ func main(){
 			return nil
 		}
 
-		files++
-		paths <- path
-		return nil
+		select {
+		case <-ctx.Done():
+			return filepath.SkipAll
+		case paths <- path:
+			files++
+			return nil
+		}
 	})
 	close(paths)
 
@@ -72,6 +96,10 @@ func main(){
 	}
 
 	wg.Wait()
+
+	if ctx.Err() != nil {
+        fmt.Printf("\nCancelled — partial results below\n")
+    }
 
 	elapsed := time.Since(start)
 	fmt.Printf("Took %v\n", elapsed)
