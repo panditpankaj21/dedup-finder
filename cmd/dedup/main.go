@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -36,15 +37,11 @@ func main(){
 			defer wg.Done()
 			for path := range paths {
 				// read -> hash -> lock -> append -> unlock
-				data, err := os.ReadFile(path)
+				hashStr, err := hashFile(path)
 				if err != nil {
-					log.Printf("WARN: could not read %s: %v", path, err)
+					log.Printf("WARN: could not hash %s: %v", path, err)
 					continue
 				}
-
-				hash := sha256.Sum256(data) // returns [32]byte fixed-size array
-				// hex.EncodeToString gives you the readable hash like "2cf24dba...".
-				hashStr := hex.EncodeToString(hash[:]) // converts to 64-char hex string
 
 				mu.Lock()
 				hashes[hashStr] = append(hashes[hashStr], path)
@@ -99,4 +96,33 @@ func main(){
 	} else {
 		fmt.Printf("\nFound %d duplicate group(s).\n", duplicateGroups)
 	}
+}
+
+
+func hashFile(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+
+	h := sha256.New()
+
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	// Loop:
+	// 	read 32KB from f into buffer
+	// 	if EOF: break
+	// 	write buffer to h
+	// 	discard buffer
+
+	sum := h.Sum(nil) // []byte (32 bytes)
+	hashStr := hex.EncodeToString(sum)
+
+	// hash := sha256.Sum256(data) // returns [32]byte fixed-size array
+	// // hex.EncodeToString gives you the readable hash like "2cf24dba...".
+	// hashStr := hex.EncodeToString(hash[:]) // converts to 64-char hex string
+
+	return hashStr, nil
 }
