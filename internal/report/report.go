@@ -9,7 +9,11 @@ func Print(hashes map[string][]string) int {
             continue
         }
         groups++
-        fmt.Printf("\nGroup %d (hash %s...) — %d files:\n", groups, h[:8], len(paths))
+        short := h
+        if len(h) > 8 {
+            short = h[:8]
+        }
+        fmt.Printf("\nGroup %d (hash %s...) — %d files:\n", groups, short, len(paths))
         for _, p := range paths {
             fmt.Printf(" %s\n", p)
         }
