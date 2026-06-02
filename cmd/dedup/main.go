@@ -1,71 +1,78 @@
 package main
 
 import (
-    "context"
-    "fmt"
-    "log"
-    "os"
-    "os/signal"
-    "sync"
-    "syscall"
-    "time"
+	"context"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"sync"
+	"syscall"
+	"time"
 
-    "dedup-finder/internal/report"
-    "dedup-finder/internal/walker"
-    "dedup-finder/internal/worker"
+	"dedup-finder/internal/report"
+	"dedup-finder/internal/sizegroup"
+	"dedup-finder/internal/walker"
+	"dedup-finder/internal/worker"
 )
 
 const numWorkers = 8
 
 func main() {
-    if len(os.Args) < 2 {
-        log.Fatal("usage: dedup <directory>")
-    }
-    root := os.Args[1]
-    log.Printf("Scanning %s...", root)
-    start := time.Now()
+	if len(os.Args) < 2 {
+		log.Fatal("usage: dedup <directory>")
+	}
+	root := os.Args[1]
+	log.Printf("Scanning %s...", root)
+	start := time.Now()
 
-    ctx, cancel := context.WithCancel(context.Background())
-    defer cancel()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-    sigChan := make(chan os.Signal, 1)
-    signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
-    go func() {
-        <-sigChan
-        log.Printf("Cancellation requested, stopping...")
-        cancel()
-    }()
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigChan
+		log.Printf("Cancellation requested, stopping...")
+		cancel()
+	}()
 
-    paths := make(chan string, 100)
-    hashes := make(map[string][]string)
-    var mu sync.Mutex
+	walkerOut := make(chan string, 100)
+	go func() {
+		defer close(walkerOut)
+		walker.Walk(ctx, root, walkerOut)
+	}()
 
-    // Workers run in a goroutine so main can also walk
-    var workerWg sync.WaitGroup
-    workerWg.Add(1)
-    go func() {
-        defer workerWg.Done()
-        worker.Pool(ctx, numWorkers, paths, hashes, &mu)
-    }()
+	candidates, totalSeen := sizegroup.Filter(ctx, walkerOut)
 
-    files, err := walker.Walk(ctx, root, paths)
-    close(paths)
-    if err != nil {
-        log.Printf("WARN: walk: %v", err)
-    }
+	log.Printf("Stat phase: %d files seen, %d candidates need hashing", totalSeen, len(candidates))
 
-    workerWg.Wait()
+	workerIn := make(chan string, 100)
+	go func() {
+		defer close(workerIn)
+		for _, p := range candidates {
+			select {
+			case <-ctx.Done():
+				return
+			case workerIn <- p:
+			}
+		}
+	}()
 
-    elapsed := time.Since(start)
-    if ctx.Err() != nil {
-        fmt.Printf("\nCancelled — partial results below\n")
-    }
-    fmt.Printf("Took %v\n\nScanned %d files\n", elapsed, files)
+	hashes := make(map[string][]string)
+	var mu sync.Mutex
+	worker.Pool(ctx, numWorkers, workerIn, hashes, &mu)
 
-    groups := report.Print(hashes)
-    if groups == 0 {
-        fmt.Println("\nNo duplicates found.")
-    } else {
-        fmt.Printf("\nFound %d duplicate group(s).\n", groups)
-    }
+	elapsed := time.Since(start)
+	if ctx.Err() != nil {
+		fmt.Printf("\nCancelled — partial results below\n")
+	}
+	fmt.Printf("Took %v\n\nScanned %d files\n", elapsed, totalSeen)
+
+	groups := report.Print(hashes)
+	if groups == 0 {
+		fmt.Println("\nNo duplicates found.")
+	} else {
+		fmt.Printf("\nFound %d duplicate group(s).\n", groups)
+	}
 }
