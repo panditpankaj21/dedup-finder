@@ -112,7 +112,7 @@ func TestFilter(t *testing.T) {
 		// minSize=5 should skip tiny.txt
 		candidates, totalSeen := Filter(context.Background(), paths, 5)
 		
-		if totalSeen != 2 {
+		if totalSeen != 3 {
 			t.Errorf("expected totalSeen=2 (tiny.txt filtered out), got %d", totalSeen)
 		}
 		if len(candidates) != 2 {

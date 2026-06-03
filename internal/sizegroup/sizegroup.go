@@ -19,13 +19,14 @@ func Filter(ctx context.Context, paths <-chan string, minSize int64) ([]string, 
 				return collectCandidate(sizeGroups), totalSeen
 			}
 
-			totalSeen++
-
+			
 			fileInfo, err := os.Stat(path)
 			if err != nil {
 				log.Printf("WARN: failed stat: %v", err)
 				continue
 			}
+			
+			totalSeen++
 			
 			sz := fileInfo.Size()
 			if sz < minSize {
