@@ -6,7 +6,7 @@ import (
 	"os"
 )
 
-func Filter(ctx context.Context, paths <-chan string) ([]string, int) {
+func Filter(ctx context.Context, paths <-chan string, minSize int64) ([]string, int) {
 	sizeGroups := make(map[int64][]string)
 	totalSeen := 0
 
@@ -28,6 +28,9 @@ func Filter(ctx context.Context, paths <-chan string) ([]string, int) {
 			}
 			
 			sz := fileInfo.Size()
+			if sz < minSize {
+				continue
+			}
 			sizeGroups[sz] = append(sizeGroups[sz], path)
 		}
 	}

@@ -21,7 +21,7 @@ func TestFilter(t *testing.T) {
 		paths <- filepath.Join(dir, "medium.txt")
 		close(paths)
 
-		candidates, totalSeen := Filter(context.Background(), paths)
+		candidates, totalSeen := Filter(context.Background(), paths, 0)
 
 		
 		if totalSeen != 3 {
@@ -45,7 +45,7 @@ func TestFilter(t *testing.T) {
 		paths <- filepath.Join(dir, "unique.txt")
 		close(paths)
 
-		candidates, totalSeen := Filter(context.Background(), paths)
+		candidates, totalSeen := Filter(context.Background(), paths, 0)
 
 		if totalSeen != 3 {
 			t.Errorf("expected totalSeen=3, got %d", totalSeen)
@@ -68,7 +68,7 @@ func TestFilter(t *testing.T) {
 		paths := make(chan string, 10)
 		paths <- "fake-path-that-wont-be-processed"
 
-		candidates, totalSeen := Filter(ctx, paths)
+		candidates, totalSeen := Filter(ctx, paths, 0)
 
 		if totalSeen != 0 {
 			t.Errorf("expected totalSeen=0 (cancelled), got %d", totalSeen)
@@ -90,10 +90,33 @@ func TestFilter(t *testing.T) {
 		close(paths)
 
 		// ACT
-		candidates, _ := Filter(context.Background(), paths)
+		candidates, _ := Filter(context.Background(), paths, 0)
 
 		if len(candidates) != 2 {
 			t.Errorf("expected 2 candidates (the 2 good files share size), got %d", len(candidates))
+		}
+	})
+
+	t.Run("respects minSize filter", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFile(t, filepath.Join(dir, "tiny.txt"), "ab")          // 2 bytes
+		writeFile(t, filepath.Join(dir, "big1.txt"), "aaaaaaaaaa")  // 10 bytes
+		writeFile(t, filepath.Join(dir, "big2.txt"), "bbbbbbbbbb")  // 10 bytes
+		
+		paths := make(chan string, 10)
+		paths <- filepath.Join(dir, "tiny.txt")
+		paths <- filepath.Join(dir, "big1.txt")
+		paths <- filepath.Join(dir, "big2.txt")
+		close(paths)
+		
+		// minSize=5 should skip tiny.txt
+		candidates, totalSeen := Filter(context.Background(), paths, 5)
+		
+		if totalSeen != 2 {
+			t.Errorf("expected totalSeen=2 (tiny.txt filtered out), got %d", totalSeen)
+		}
+		if len(candidates) != 2 {
+			t.Errorf("expected 2 candidates (big1/big2), got %d", len(candidates))
 		}
 	})
 }

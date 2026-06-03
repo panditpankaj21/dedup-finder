@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -16,14 +18,34 @@ import (
 	"dedup-finder/internal/worker"
 )
 
-const numWorkers = 8
-
 func main() {
-	if len(os.Args) < 2 {
-		log.Fatal("usage: dedup <directory>")
+	workers := flag.Int("workers", 8, "number of concurrent workers")
+	minSize := flag.Int64("min-size", 0, "skip files smaller than N bytes")
+	ignore := flag.String("ignore", "", "comma-separated patterns to skip (e.g., '.git,*.log')")
+
+	flag.Usage = func() {
+		fmt.Fprintf(os.Stderr, "Usage: %s [flags] <directory>\n\nFlags:\n", os.Args[0])
+		flag.PrintDefaults()
 	}
-	root := os.Args[1]
-	log.Printf("Scanning %s...", root)
+	flag.Parse()
+
+	log.Println(*workers)
+
+	if flag.NArg() < 1 {
+		flag.Usage()
+		os.Exit(1)
+	}	
+	root := flag.Arg(0)
+
+	var ignorePatterns []string
+	if *ignore != "" {
+		ignorePatterns = strings.Split(*ignore, ",")
+		for i := range ignorePatterns {
+			ignorePatterns[i] = strings.TrimSpace(ignorePatterns[i])
+		}
+	}
+
+	log.Printf("Scanning %s (workers=%d, min-size=%d, ignore=%v)...", root, *workers, *minSize, ignorePatterns)
 	start := time.Now()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -40,10 +62,10 @@ func main() {
 	walkerOut := make(chan string, 100)
 	go func() {
 		defer close(walkerOut)
-		walker.Walk(ctx, root, walkerOut)
+		walker.Walk(ctx, root, ignorePatterns, walkerOut)
 	}()
 
-	candidates, totalSeen := sizegroup.Filter(ctx, walkerOut)
+	candidates, totalSeen := sizegroup.Filter(ctx, walkerOut, *minSize)
 
 	log.Printf("Stat phase: %d files seen, %d candidates need hashing", totalSeen, len(candidates))
 
@@ -61,7 +83,7 @@ func main() {
 
 	hashes := make(map[string][]string)
 	var mu sync.Mutex
-	worker.Pool(ctx, numWorkers, workerIn, hashes, &mu)
+	worker.Pool(ctx, *workers, workerIn, hashes, &mu)
 
 	elapsed := time.Since(start)
 	if ctx.Err() != nil {

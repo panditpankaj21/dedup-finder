@@ -21,7 +21,7 @@ func TestWalk(t *testing.T) {
 		// Note: buffered channel sized larger than file count so Walk never blocks.
 		// In production code we drain in a goroutine — see Pattern A in real worker pools.
 		paths := make(chan string, 100)
-		count, err := Walk(context.Background(), dir, paths)
+		count, err := Walk(context.Background(), dir, nil, paths)
 		close(paths)
 
 		// Drain whatever Walk sent
@@ -56,7 +56,7 @@ func TestWalk(t *testing.T) {
 
 		// ACT
 		paths := make(chan string, 100)
-		count, _ := Walk(ctx, dir, paths)
+		count, _ := Walk(ctx, dir, nil, paths)
 		close(paths)
 
 		// ASSERT: nothing was queued because we cancelled first
@@ -77,7 +77,7 @@ func TestWalk(t *testing.T) {
 
 		// ACT
 		paths := make(chan string, 100)
-		count, err := Walk(context.Background(), dir, paths)
+		count, err := Walk(context.Background(), dir, nil, paths)
 		close(paths)
 
 		// ASSERT
